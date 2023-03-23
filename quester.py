@@ -20,7 +20,7 @@ from cornac.models.narre.narre import TextProcessor, AddGlobalBias
 
 
 def get_item_qa(
-    batch_iids, train_set, max_text_length, max_num_qa=None, max_num_answer=1
+    batch_iids, train_set, max_text_length, max_num_question=None, max_num_answer=1
 ):
 
     batch_item_qas, batch_item_num_qas = [], []
@@ -30,7 +30,7 @@ def get_item_qa(
             for inc, item_question_answers_ids in enumerate(
                 train_set.review_and_item_qa_text.item_qas[idx]
             ):
-                if max_num_qa is not None and inc == max_num_qa:
+                if max_num_question is not None and inc == max_num_question:
                     break
                 item_question_answers_batch_seq = train_set.review_and_item_qa_text.batch_seq(
                     item_question_answers_ids[: 1 + max_num_answer]
@@ -108,7 +108,7 @@ class Model:
         dropout_rate=0.5,
         max_text_length=50,
         max_num_review=None,
-        max_num_qa=None,
+        max_num_question=None,
         pretrained_word_embeddings=None,
         temperature_parameter=1.0,
         verbose=False,
@@ -129,7 +129,7 @@ class Model:
         self.dropout_rate = dropout_rate
         self.max_text_length = max_text_length
         self.max_num_review = max_num_review
-        self.max_num_qa = max_num_qa
+        self.max_num_question = max_num_question
         self.verbose = verbose
         if seed is not None:
             self.rng = get_rng(seed)
@@ -168,8 +168,8 @@ class Model:
         i_item_review = Input(
             shape=(None, self.max_text_length), dtype="int32", name="input_item_review"
         )
-        i_item_qa = Input(
-            shape=(None, self.max_text_length), dtype="int32", name="input_item_qa"
+        i_item_question = Input(
+            shape=(None, self.max_text_length), dtype="int32", name="input_item_question"
         )
         i_user_num_reviews = Input(
             shape=(1,), dtype="int32", name="input_user_number_of_review"
@@ -403,7 +403,7 @@ class Model:
                 self.graph.get_layer("input_item_rating").input,
                 self.graph.get_layer("input_item_review").input,
                 self.graph.get_layer("input_item_number_of_review").input,
-                self.graph.get_layer("input_item_qa").input,
+                self.graph.get_layer("input_item_question").input,
                 self.graph.get_layer("input_item_number_of_qa").input,
             ],
             outputs=[
@@ -423,13 +423,13 @@ class Model:
             dtype=np.float32,
         )
         Eta = np.zeros(
-            (self.n_items, self.max_num_qa, self.max_num_review), dtype=np.float32
+            (self.n_items, self.max_num_question, self.max_num_review), dtype=np.float32
         )
         Beta = np.zeros(
-            (self.n_items, self.max_num_qa, self.max_num_review), dtype=np.float32
+            (self.n_items, self.max_num_question, self.max_num_review), dtype=np.float32
         )
-        Kappa = np.zeros((self.n_items, self.max_num_qa), dtype=np.float32)
-        Gamma = np.zeros((self.n_items, self.max_num_qa), dtype=np.float32)
+        Kappa = np.zeros((self.n_items, self.max_num_question), dtype=np.float32)
+        Gamma = np.zeros((self.n_items, self.max_num_question), dtype=np.float32)
         for batch_users in train_set.user_iter(batch_size):
             user_reviews, user_num_reviews, user_ratings = get_review_data(
                 batch_users,
@@ -455,7 +455,7 @@ class Model:
                 max_num_review=self.max_num_review,
             )
             item_qas, item_num_qas = get_item_qa(
-                batch_items, train_set, self.max_text_length, max_num_qa=self.max_num_qa
+                batch_items, train_set, self.max_text_length, max_num_question=self.max_num_question
             )
             qi, eta_jl, beta_jl, kappa_j, gamma_j = item_attention_pooling(
                 [
@@ -565,7 +565,7 @@ class QuestER(Recommender):
         dropout_rate=0.5,
         max_text_length=128,
         max_num_review=32,
-        max_num_qa=32,
+        max_num_question=32,
         batch_size=64,
         max_iter=10,
         optimizer="adam",
@@ -589,7 +589,7 @@ class QuestER(Recommender):
         self.dropout_rate = dropout_rate
         self.max_text_length = max_text_length
         self.max_num_review = max_num_review
-        self.max_num_qa = max_num_qa
+        self.max_num_question = max_num_question
         self.batch_size = batch_size
         self.max_iter = max_iter
         self.optimizer = optimizer
@@ -634,7 +634,7 @@ class QuestER(Recommender):
                     dropout_rate=self.dropout_rate,
                     max_text_length=self.max_text_length,
                     max_num_review=self.max_num_review,
-                    max_num_qa=self.max_num_qa,
+                    max_num_question=self.max_num_question,
                     pretrained_word_embeddings=self.init_params.get(
                         "pretrained_word_embeddings"
                     ),
@@ -684,7 +684,7 @@ class QuestER(Recommender):
                     batch_items,
                     self.train_set,
                     self.max_text_length,
-                    max_num_qa=self.max_num_qa,
+                    max_num_question=self.max_num_question,
                 )
                 with tf.GradientTape() as tape:
                     predictions = self.model.graph(
