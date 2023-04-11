@@ -20,12 +20,14 @@ from cornac.models.narre.narre import TextProcessor, AddGlobalBias
 
 
 def get_item_qa(
-    batch_iids, train_set, max_text_length, max_num_question=None, max_num_answer=1
+    batch_iids, train_set, max_text_length, max_num_question=32, max_num_answer=16
 ):
-
-    batch_item_qas, batch_item_num_qas = [], []
+    batch_item_questions, batch_item_num_questions = [], []
+    batch_item_question_answers, batch_item_question_num_answers = [], []
     for idx in batch_iids:
-        item_questions_answers = []
+        item_questions = []
+        item_answers = []
+        item_question_num_answers = []
         if idx in train_set.review_and_item_qa_text.item_qas:
             for inc, item_question_answers_ids in enumerate(
                 train_set.review_and_item_qa_text.item_qas[idx]
@@ -33,29 +35,45 @@ def get_item_qa(
                 if max_num_question is not None and inc == max_num_question:
                     break
                 item_question_answers_batch_seq = train_set.review_and_item_qa_text.batch_seq(
-                    item_question_answers_ids[: 1 + max_num_answer]
+                    item_question_answers_ids[: 1 + max_num_answer],
+                    max_length=max_text_length
                 )  # keep the question and maximum number of answers acompanying with the given question
-                item_questions_answers.append(
-                    item_question_answers_batch_seq[
-                        item_question_answers_batch_seq > 0
-                    ].tolist()
+                
+                item_questions.append(
+                    item_question_answers_batch_seq[0]
                 )
-        item_questions_answers = pad_sequences(
-            item_questions_answers, padding="post", maxlen=max_text_length
+                if len(item_question_answers_ids) == 1: # question w/o answer, use question content as answer
+                    item_answers.append(item_question_answers_batch_seq[:1])
+                    item_question_num_answers.append(1)
+                else:
+                    item_answers.append(item_question_answers_batch_seq[1:])
+                    item_question_num_answers.append(len(item_question_answers_batch_seq[1:]))
+            item_answers = np.array([
+                np.concatenate([item_answers[i], np.zeros((max_num_answer - item_answers[i].shape[0], item_answers[i].shape[1]))])
+                for i in range(len(item_answers))
+            ], dtype="int32")
+            item_answers = np.concatenate([item_answers, np.zeros((max_num_question - item_answers.shape[0], item_answers.shape[1], item_answers.shape[2]))]).astype(np.int32)
+        item_questions = pad_sequences(
+            item_questions, padding="post", maxlen=max_text_length
         )
-        batch_item_qas.append(item_questions_answers)
-        batch_item_num_qas.append(len(item_questions_answers))
-    batch_item_qas = pad_sequences(batch_item_qas, padding="post")
-    if len(batch_item_qas.shape) == 2:
-        batch_item_qas = batch_item_qas.reshape(
-            batch_item_qas.shape[0], 0, max_text_length
+        batch_item_num_questions.append(len(item_questions))
+        item_questions = np.concatenate([item_questions, np.zeros((max_num_question - item_questions.shape[0], item_questions.shape[1]))]).astype(np.int32)
+        batch_item_questions.append(item_questions)
+        batch_item_question_answers.append(item_answers)
+        batch_item_question_num_answers.append(item_question_num_answers)
+    batch_item_questions = pad_sequences(batch_item_questions, padding="post")
+    if len(batch_item_questions.shape) == 2:
+        batch_item_questions = batch_item_questions.reshape(
+            batch_item_questions.shape[0], 0, max_text_length
         )
-    batch_item_num_qas = np.array(batch_item_num_qas)
-    return batch_item_qas, batch_item_num_qas
+    batch_item_num_questions = np.array(batch_item_num_questions)
+    batch_item_question_num_answers = pad_sequences(batch_item_question_num_answers, padding="post", maxlen=max_num_question)
+    batch_item_question_answers = np.array(batch_item_question_answers, dtype=np.int32)
+    return batch_item_questions, batch_item_num_questions, batch_item_question_answers, batch_item_question_num_answers
 
 
 def get_review_data(
-    batch_ids, train_set, max_text_length, by="user", max_num_review=None
+    batch_ids, train_set, max_text_length, by="user", max_num_review=32
 ):
     batch_reviews, batch_num_reviews = [], []
     review_group = (
@@ -73,8 +91,11 @@ def get_review_data(
         reviews = train_set.review_and_item_qa_text.batch_seq(
             review_ids, max_length=max_text_length
         )
-        batch_reviews.append(reviews)
         batch_num_reviews.append(len(reviews))
+        reviews = pad_sequences(reviews, padding="post", maxlen=max_text_length)
+        reviews = np.concatenate([reviews, np.zeros((max_num_review - reviews.shape[0], reviews.shape[1]))]).astype(np.int32)
+        batch_reviews.append(reviews)
+    batch_reviews = pad_sequences(batch_reviews, padding="post")
     batch_ratings = (
         np.zeros((len(batch_ids), train_set.num_items), dtype=np.float32)
         if by == "user"
@@ -85,8 +106,7 @@ def get_review_data(
         jds, ratings = rating_group[idx]
         for jdx, rating in zip(jds, ratings):
             batch_ratings[batch_inc, jdx] = rating
-    batch_reviews = pad_sequences(batch_reviews, padding="post")
-    batch_num_reviews = np.array(batch_num_reviews).astype(np.int32)
+    batch_num_reviews = np.array(batch_num_reviews, dtype=np.int32)
     return batch_reviews, batch_num_reviews, batch_ratings
 
 
@@ -109,6 +129,7 @@ class Model:
         max_text_length=50,
         max_num_review=None,
         max_num_question=None,
+        max_num_answer=None,
         pretrained_word_embeddings=None,
         temperature_parameter=1.0,
         verbose=False,
@@ -130,6 +151,7 @@ class Model:
         self.max_text_length = max_text_length
         self.max_num_review = max_num_review
         self.max_num_question = max_num_question
+        self.max_num_answer = max_num_answer
         self.verbose = verbose
         if seed is not None:
             self.rng = get_rng(seed)
@@ -171,14 +193,20 @@ class Model:
         i_item_question = Input(
             shape=(None, self.max_text_length), dtype="int32", name="input_item_question"
         )
+        i_item_question_answer = Input(
+            shape=(None, None, self.max_text_length), dtype="int32", name="input_item_question_answer"
+        )
         i_user_num_reviews = Input(
             shape=(1,), dtype="int32", name="input_user_number_of_review"
         )
         i_item_num_reviews = Input(
             shape=(1,), dtype="int32", name="input_item_number_of_review"
         )
-        i_item_num_qas = Input(
-            shape=(1,), dtype="int32", name="input_item_number_of_qa"
+        i_item_num_questions = Input(
+            shape=(1,), dtype="int32", name="input_item_number_of_question"
+        )
+        i_item_question_num_answers = Input(
+            shape=(None, 1,), dtype="int32", name="input_item_question_number_of_answer"
         )
 
         l_text_embedding = layers.Embedding(
@@ -228,12 +256,19 @@ class Model:
             dropout_rate=self.dropout_rate,
             name="item_text_processor",
         )
-        item_qa_text_processor = TextProcessor(
+        item_question_text_processor = TextProcessor(
             self.max_text_length,
             filters=self.n_filters,
             kernel_sizes=self.kernel_sizes,
             dropout_rate=self.dropout_rate,
-            name="item_qa_text_processor",
+            name="item_question_text_processor",
+        )
+        item_question_answer_text_processor = TextProcessor(
+            self.max_text_length,
+            filters=self.n_filters,
+            kernel_sizes=self.kernel_sizes,
+            dropout_rate=self.dropout_rate,
+            name="item_question_answer_text_processor",
         )
         user_review_h = user_text_processor(
             l_text_embedding(i_user_review), training=True
@@ -241,7 +276,9 @@ class Model:
         item_review_h = item_text_processor(
             l_text_embedding(i_item_review), training=True
         )
-        item_qa_h = item_qa_text_processor(l_text_embedding(i_item_qa), training=True)
+        item_question_h = item_question_text_processor(l_text_embedding(i_item_question), training=True)
+
+        item_question_answer_h = item_question_answer_text_processor(l_text_embedding(tf.reshape(i_item_question_answer, shape=(-1, max_num_answer, max_text_length))), training=True)
 
         l_user_mlp = keras.models.Sequential(
             [
@@ -273,7 +310,7 @@ class Model:
         )
         a_user_masking = tf.expand_dims(
             tf.sequence_mask(
-                tf.reshape(i_user_num_reviews, [-1]), maxlen=i_user_review.shape[1]
+                tf.reshape(i_user_num_reviews, [-1]), maxlen=max_num_review
             ),
             -1,
         )
@@ -281,24 +318,57 @@ class Model:
             a_user, a_user_masking
         )
 
-        a_item_qa_dense = layers.Dense(
+        a_item_question_dense = layers.Dense(
             self.attention_size, activation="tanh", use_bias=True
-        )(item_qa_h)
-        phi_jl = tf.expand_dims(a_item_qa_dense, axis=2)
+        )(item_question_h)
+        a_item_question_answer_dense = layers.Dense(
+            self.attention_size, activation="tanh", use_bias=True
+        )(item_question_answer_h)
+
+        phi_jk = tf.expand_dims(a_item_question_dense, axis=2)
+        psi_jkl = tf.reshape(a_item_question_answer_dense, shape=(-1, max_num_question, max_num_answer, a_item_question_answer_dense.shape[-1]))
+        upsilon_jkl = layers.Dense(1, activation=None, use_bias=False, name="upsilon_jkl")(tf.multiply(psi_jkl, phi_jk) + psi_jkl)
+        upsilon_jkl_mask = tf.cast(
+            tf.expand_dims(
+                tf.cast(
+                    tf.reshape(
+                        tf.sequence_mask(tf.reshape(i_item_question_num_answers, [-1]), maxlen=max_num_answer),
+                        shape=(-1, max_num_question, max_num_answer)
+                    ),
+                    dtype=tf.int32,
+                ) * tf.cast(
+                    tf.expand_dims(
+                        tf.sequence_mask(tf.reshape(i_item_num_questions, [-1]), maxlen=max_num_question),
+                        axis=-1,
+                    ),
+                    dtype=tf.int32,
+                ),
+                axis=-1
+            ),
+            dtype=tf.bool
+        )
+        xi_jkl = layers.Softmax(axis=2, name="xi_jkl")(upsilon_jkl, upsilon_jkl_mask)
+        omega_jk = tf.reshape(
+            tf.reduce_sum(
+                layers.Multiply()([tf.reshape(xi_jkl, shape=(-1, max_num_answer, 1)), item_question_answer_h]), axis=1
+            ),
+            shape=(-1, max_num_question, item_question_answer_h.shape[-1])
+        )
+        chi_jk = layers.Dense(self.attention_size, activation="tanh", use_bias=True, name="chi_jk")(omega_jk)
+        
         a_item_review_dense = layers.Dense(
             self.attention_size, activation="tanh", use_bias=True
         )(tf.multiply(item_review_h, tf.expand_dims(item_rating_h, 1)))
-        rho_jk = tf.expand_dims(a_item_review_dense, axis=1)
-        eta_jlk = layers.Dense(1, activation=None, use_bias=False, name="eta_jlk")(
-            tf.multiply(rho_jk, phi_jl) + rho_jk
+        rho_ij = tf.expand_dims(a_item_review_dense, axis=2)
+        eta_jkl = layers.Dense(1, activation=None, use_bias=False, name="eta_jkl")(
+            tf.multiply(tf.expand_dims(chi_jk, axis=1), rho_ij) + rho_ij
         )
-
-        eta_jlk_mask = tf.cast(
+        eta_jkl_mask = tf.cast(
             tf.expand_dims(
                 tf.cast(
                     tf.expand_dims(
                         tf.sequence_mask(
-                            tf.reshape(i_item_num_qas, [-1]), maxlen=i_item_qa.shape[1]
+                            tf.reshape(i_item_num_reviews, [-1]), maxlen=max_num_review
                         ),
                         axis=-1,
                     ),
@@ -307,8 +377,7 @@ class Model:
                 * tf.cast(
                     tf.expand_dims(
                         tf.sequence_mask(
-                            tf.reshape(i_item_num_reviews, [-1]),
-                            maxlen=i_item_review.shape[1],
+                            tf.reshape(i_item_num_questions, [-1]), maxlen=max_num_question
                         ),
                         axis=1,
                     ),
@@ -318,20 +387,22 @@ class Model:
             ),
             dtype=tf.bool,
         )
-        beta_jlk = layers.Softmax(axis=2, name="beta_jlk")(eta_jlk, eta_jlk_mask)
 
-        d_jl = tf.reduce_sum(
-            layers.Multiply()([beta_jlk, tf.expand_dims(item_review_h, axis=1)]), axis=2
-        )
-        kappa_jl = layers.Dense(1, activation=None, use_bias=False, name="kappa_jl")(
-            layers.Dense(self.attention_size, activation="tanh", use_bias=True)(d_jl)
+        beta_jkl = layers.Softmax(axis=2, name="beta_jkl")(eta_jkl, eta_jkl_mask)
+
+        d_jk = tf.reduce_sum(
+            layers.Multiply()([beta_jkl, tf.expand_dims(chi_jk, axis=1)]), axis=2
         )
 
-        gamma_jl = layers.Softmax(axis=1, name="gamma_jl")(
-            kappa_jl / temperature_parameter,
+        kappa_jk = layers.Dense(1, activation=None, use_bias=False, name="kappa_jk")(
+            layers.Dense(self.attention_size, activation="tanh", use_bias=True)(d_jk)
+        )
+
+        gamma_jk = layers.Softmax(axis=1, name="gamma_jk")(
+            kappa_jk / temperature_parameter,
             tf.expand_dims(
                 tf.sequence_mask(
-                    tf.reshape(i_item_num_qas, [-1]), maxlen=i_item_qa.shape[1]
+                    tf.reshape(i_item_num_reviews, [-1]), maxlen=max_num_review
                 ),
                 -1,
             ),
@@ -343,13 +414,13 @@ class Model:
         )
         oi = layers.Dense(self.n_factors, use_bias=True, name="oi")(
             layers.Dropout(rate=self.dropout_rate, name="item_Oi")(
-                tf.reduce_sum(layers.Multiply()([gamma_jl, d_jl]), axis=1)
+                tf.reduce_sum(layers.Multiply()([gamma_jk, d_jk]), axis=1)
             )
         )
 
         pu = layers.Concatenate(axis=-1, name="pu")(
             [
-                tf.expand_dims(user_rating_h, 1),
+                tf.expand_dims(user_rating_h, axis=1),
                 tf.expand_dims(ou, axis=1),
                 l_user_embedding(i_user_id),
             ]
@@ -357,7 +428,7 @@ class Model:
 
         qi = layers.Concatenate(axis=-1, name="qi")(
             [
-                tf.expand_dims(item_rating_h, 1),
+                tf.expand_dims(item_rating_h, axis=1),
                 tf.expand_dims(oi, axis=1),
                 l_item_embedding(i_item_id),
             ]
@@ -379,13 +450,16 @@ class Model:
                 i_item_rating,
                 i_item_review,
                 i_item_num_reviews,
-                i_item_qa,
-                i_item_num_qas,
+                i_item_question,
+                i_item_num_questions,
+                i_item_question_answer,
+                i_item_question_num_answers
             ],
             outputs=r,
         )
         if self.verbose:
             self.graph.summary()
+
 
     def get_weights(self, train_set, batch_size=64):
         user_attention_review_pooling = keras.Model(
@@ -404,14 +478,17 @@ class Model:
                 self.graph.get_layer("input_item_review").input,
                 self.graph.get_layer("input_item_number_of_review").input,
                 self.graph.get_layer("input_item_question").input,
-                self.graph.get_layer("input_item_number_of_qa").input,
+                self.graph.get_layer("input_item_number_of_question").input,
+                self.graph.get_layer("input_item_question_answer").input,
+                self.graph.get_layer("input_item_question_number_of_answer").input
             ],
             outputs=[
                 self.graph.get_layer("qi").output,
-                self.graph.get_layer("eta_jlk").output,
-                self.graph.get_layer("beta_jlk").output,
-                self.graph.get_layer("kappa_jl").output,
-                self.graph.get_layer("gamma_jl").output,
+                self.graph.get_layer("xi_jkl").output,
+                self.graph.get_layer("eta_jkl").output,
+                self.graph.get_layer("beta_jkl").output,
+                self.graph.get_layer("kappa_jk").output,
+                self.graph.get_layer("gamma_jk").output,
             ],
         )
         P = np.zeros(
@@ -422,14 +499,15 @@ class Model:
             (self.n_items, self.n_filters + self.n_factors + self.id_embedding_size),
             dtype=np.float32,
         )
+        Xi = np.zeros((self.n_items, self.max_num_question, self.max_num_answer), dtype=np.float32)
         Eta = np.zeros(
-            (self.n_items, self.max_num_question, self.max_num_review), dtype=np.float32
+            (self.n_items, self.max_num_review, self.max_num_question), dtype=np.float32
         )
         Beta = np.zeros(
-            (self.n_items, self.max_num_question, self.max_num_review), dtype=np.float32
+            (self.n_items, self.max_num_review, self.max_num_question), dtype=np.float32
         )
-        Kappa = np.zeros((self.n_items, self.max_num_question), dtype=np.float32)
-        Gamma = np.zeros((self.n_items, self.max_num_question), dtype=np.float32)
+        Kappa = np.zeros((self.n_items, self.max_num_review), dtype=np.float32)
+        Gamma = np.zeros((self.n_items, self.max_num_review), dtype=np.float32)
         for batch_users in train_set.user_iter(batch_size):
             user_reviews, user_num_reviews, user_ratings = get_review_data(
                 batch_users,
@@ -454,20 +532,25 @@ class Model:
                 by="item",
                 max_num_review=self.max_num_review,
             )
-            item_qas, item_num_qas = get_item_qa(
-                batch_items, train_set, self.max_text_length, max_num_question=self.max_num_question
+            item_questions, item_num_questions, item_question_answers, item_question_num_answers  = get_item_qa(
+                batch_items, train_set, self.max_text_length, max_num_question=self.max_num_question, max_num_answer=self.max_num_answer,
             )
-            qi, eta_jl, beta_jl, kappa_j, gamma_j = item_attention_pooling(
+            qi, xi_jk, eta_jl, beta_jl, kappa_j, gamma_j = item_attention_pooling(
                 [
                     batch_items,
                     item_ratings,
                     item_reviews,
                     item_num_reviews,
-                    item_qas,
-                    item_num_qas,
+                    item_questions,
+                    item_num_questions,
+                    item_question_answers,
+                    item_question_num_answers
                 ],
                 training=False,
             )
+            Xi[
+                batch_items, : xi_jk.shape[1], : xi_jk.shape[2]
+            ] = xi_jk.numpy().reshape(xi_jk.shape[:3])
             Eta[
                 batch_items, : eta_jl.shape[1], : eta_jl.shape[2]
             ] = eta_jl.numpy().reshape(eta_jl.shape[:3])
@@ -488,7 +571,7 @@ class Model:
         bu = self.graph.get_layer("user_bias").get_weights()[0]
         bi = self.graph.get_layer("item_bias").get_weights()[0]
         mu = self.graph.get_layer("global_bias").get_weights()[0][0]
-        return P, Q, W1, bu, bi, mu, Eta, Beta, Kappa, Gamma
+        return P, Q, W1, bu, bi, mu, Xi, Eta, Beta, Kappa, Gamma
 
 
 class QuestER(Recommender):
@@ -566,6 +649,7 @@ class QuestER(Recommender):
         max_text_length=128,
         max_num_review=32,
         max_num_question=32,
+        max_num_answer=16,
         batch_size=64,
         max_iter=10,
         optimizer="adam",
@@ -590,6 +674,7 @@ class QuestER(Recommender):
         self.max_text_length = max_text_length
         self.max_num_review = max_num_review
         self.max_num_question = max_num_question
+        self.max_num_answer = max_num_answer
         self.batch_size = batch_size
         self.max_iter = max_iter
         self.optimizer = optimizer
@@ -635,6 +720,7 @@ class QuestER(Recommender):
                     max_text_length=self.max_text_length,
                     max_num_review=self.max_num_review,
                     max_num_question=self.max_num_question,
+                    max_num_answer=self.max_num_answer,
                     pretrained_word_embeddings=self.init_params.get(
                         "pretrained_word_embeddings"
                     ),
@@ -680,11 +766,12 @@ class QuestER(Recommender):
                     by="item",
                     max_num_review=self.max_num_review,
                 )
-                item_qas, item_num_qas = get_item_qa(
+                item_questions, item_num_questions, item_question_answers, item_question_num_answers = get_item_qa(
                     batch_items,
                     self.train_set,
                     self.max_text_length,
                     max_num_question=self.max_num_question,
+                    max_num_answer=self.max_num_answer,
                 )
                 with tf.GradientTape() as tape:
                     predictions = self.model.graph(
@@ -697,8 +784,10 @@ class QuestER(Recommender):
                             item_ratings,
                             item_reviews,
                             item_num_reviews,
-                            item_qas,
-                            item_num_qas,
+                            item_questions,
+                            item_num_questions,
+                            item_question_answers,
+                            item_question_num_answers,
                         ],
                         training=True,
                     )
@@ -724,6 +813,7 @@ class QuestER(Recommender):
                     self.bu,
                     self.bi,
                     self.mu,
+                    self.Xi,
                     self.Eta,
                     self.Beta,
                     self.Kappa,
@@ -758,6 +848,7 @@ class QuestER(Recommender):
             self.bu,
             self.bi,
             self.mu,
+            self.Xi,
             self.Eta,
             self.Beta,
             self.Kappa,

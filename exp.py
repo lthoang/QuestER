@@ -46,6 +46,9 @@ ID_EMB_SIZE = args.n_factors
 N_FACTORS = args.n_factors
 ATTENTION_SIZE = 8
 BATCH_SIZE = args.batch_size
+MAX_NUM_REVIEW = 32
+MAX_NUM_QUESTION = 32
+MAX_NUM_ANSWER = 32
 MAX_TEXT_LENGTH = 128
 DROPOUT_RATE = 0.5
 TEST_SIZE = 0.1
@@ -134,34 +137,52 @@ with open(f"download/glove/glove.6B.{EMB_SIZE}d.txt", encoding="utf-8") as f:
         coefs = np.asarray(values[1:], dtype="float32")
         pretrained_word_embeddings[word] = coefs
 
+models = [
+    QuestER(
+        # name=f"QuestER",
+        name=f"QuestER_F_{args.n_factors}_A_{ATTENTION_SIZE}_NReview_{MAX_NUM_REVIEW}_NQuestion_{MAX_NUM_QUESTION}_NAnswer_{MAX_NUM_ANSWER}_E_{args.epoch}_BS_{BATCH_SIZE}",
+        embedding_size=EMB_SIZE,
+        id_embedding_size=ID_EMB_SIZE,
+        n_factors=args.n_factors,
+        attention_size=ATTENTION_SIZE,
+        kernel_sizes=KERNEL_SIZES,
+        n_filters=N_FILTERS,
+        dropout_rate=DROPOUT_RATE,
+        max_text_length=MAX_TEXT_LENGTH,
+        max_num_review=MAX_NUM_REVIEW,
+        max_num_question=MAX_NUM_QUESTION,
+        max_num_answer=MAX_NUM_ANSWER,
+        batch_size=BATCH_SIZE,
+        max_iter=args.epoch,
+        model_selection=args.model_selection,
+        optimizer="adam",
+        learning_rate=args.learning_rate,
+        init_params={"pretrained_word_embeddings": pretrained_word_embeddings},
+        verbose=True,
+        seed=123,
+    )
+]
 exp = cornac.Experiment(
     eval_method=eval_method,
-    models=[
-        QuestER(
-            name=f"QuestER",
-            embedding_size=EMB_SIZE,
-            id_embedding_size=ID_EMB_SIZE,
-            n_factors=args.n_factors,
-            attention_size=ATTENTION_SIZE,
-            kernel_sizes=KERNEL_SIZES,
-            n_filters=N_FILTERS,
-            dropout_rate=DROPOUT_RATE,
-            max_text_length=MAX_TEXT_LENGTH,
-            max_num_review=32,
-            max_num_question=32,
-            batch_size=BATCH_SIZE,
-            max_iter=args.epoch,
-            model_selection=args.model_selection,
-            optimizer="adam",
-            learning_rate=args.learning_rate,
-            init_params={"pretrained_word_embeddings": pretrained_word_embeddings},
-            verbose=True,
-            seed=123,
-        )
-    ],
+    models=models,
     metrics=[
         cornac.metrics.MSE(),
     ],
 )
 
 exp.run()
+print(data_dir)
+selected_model = models[0]
+epoch = selected_model.best_epoch if args.model_selection == 'best' else args.epochs.split(',')[0]
+model_name = '{}_e_{}'.format(selected_model.name, epoch)
+export_dir = os.path.join(args.input, model_name)
+os.makedirs(export_dir, exist_ok=True)
+import util
+from importlib import reload
+if args.model_selection == 'best':
+    util.export_ranked_questions(selected_model, os.path.join(export_dir, 'ranked_questions.txt'))
+    util.export_useful_review_ranking(selected_model, os.path.join(export_dir, 'useful_review_ranking.txt'))
+    util.export_most_useful_review(selected_model, os.path.join(export_dir, 'most_useful_review.txt'))
+    util.export_important_question_ranking(selected_model, os.path.join(export_dir, 'important_question_ranking.txt'))
+    util.export_quester_explanations(selected_model, export_dir)
+import pdb; pdb.set_trace()
