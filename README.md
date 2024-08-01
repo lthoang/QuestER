@@ -9,7 +9,7 @@ This is the code for the paper:
 Presented at [BigData 2022](https://bigdataieee.org/BigData2022/)
 
 
-If you find the code and [data](https://drive.google.com/drive/folders/10HVkH-cY8_GEfrMarCse-WSHelnNBi2s?usp=share_link) useful in your research, please cite:
+If you find the code and [data](https://static.preferred.ai/datasets/quester-data.zip) useful in your research, please cite:
 
 ```
 @inproceedings{le2022question,
