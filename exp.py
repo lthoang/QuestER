@@ -26,6 +26,7 @@ def parse_arguments():
     parser.add_argument("-k", "--n_factors", type=int, default=8)
     parser.add_argument("-e", "--epoch", type=int, default=20)
     parser.add_argument("-bs", "--batch_size", type=int, default=64)
+    parser.add_argument("-ma", "--max_num_answer", type=int, default=5)
     parser.add_argument(
         "-s", "--model_selection", type=str, choices=["best", "last"], default="best"
     )
@@ -47,6 +48,7 @@ N_FACTORS = args.n_factors
 ATTENTION_SIZE = 8
 BATCH_SIZE = args.batch_size
 MAX_TEXT_LENGTH = 128
+MAX_NUM_ANSWER = args.max_num_answer
 DROPOUT_RATE = 0.5
 TEST_SIZE = 0.1
 VAL_SIZE = 0.1
@@ -133,35 +135,53 @@ with open(f"download/glove/glove.6B.{EMB_SIZE}d.txt", encoding="utf-8") as f:
         word = values[0]
         coefs = np.asarray(values[1:], dtype="float32")
         pretrained_word_embeddings[word] = coefs
+models = [
+    QuestER(
+        name=f"{data_dir.split('/')[1].split('_')[0]}_QuestER_MA_{MAX_NUM_ANSWER}",
+        embedding_size=EMB_SIZE,
+        id_embedding_size=ID_EMB_SIZE,
+        n_factors=args.n_factors,
+        attention_size=ATTENTION_SIZE,
+        kernel_sizes=KERNEL_SIZES,
+        n_filters=N_FILTERS,
+        dropout_rate=DROPOUT_RATE,
+        max_text_length=MAX_TEXT_LENGTH,
+        max_num_review=32,
+        max_num_question=32,
+        max_num_answer=MAX_NUM_ANSWER,
+        batch_size=BATCH_SIZE,
+        max_iter=args.epoch,
+        model_selection=args.model_selection,
+        optimizer="adam",
+        learning_rate=args.learning_rate,
+        init_params={"pretrained_word_embeddings": pretrained_word_embeddings},
+        verbose=True,
+        seed=123,
+    )
+]
 
 exp = cornac.Experiment(
     eval_method=eval_method,
-    models=[
-        QuestER(
-            name=f"QuestER",
-            embedding_size=EMB_SIZE,
-            id_embedding_size=ID_EMB_SIZE,
-            n_factors=args.n_factors,
-            attention_size=ATTENTION_SIZE,
-            kernel_sizes=KERNEL_SIZES,
-            n_filters=N_FILTERS,
-            dropout_rate=DROPOUT_RATE,
-            max_text_length=MAX_TEXT_LENGTH,
-            max_num_review=32,
-            max_num_question=32,
-            batch_size=BATCH_SIZE,
-            max_iter=args.epoch,
-            model_selection=args.model_selection,
-            optimizer="adam",
-            learning_rate=args.learning_rate,
-            init_params={"pretrained_word_embeddings": pretrained_word_embeddings},
-            verbose=True,
-            seed=123,
-        )
-    ],
+    models=models,
     metrics=[
         cornac.metrics.MSE(),
     ],
 )
 
 exp.run()
+
+print(data_dir)
+selected_model = models[0]
+epoch = selected_model.best_epoch if args.model_selection == 'best' else args.epochs.split(',')[0]
+model_name = '{}_e_{}'.format(selected_model.name, epoch)
+export_dir = os.path.join(args.input, model_name)
+os.makedirs(export_dir, exist_ok=True)
+import util
+# from importlib import reload
+if args.model_selection == 'best':
+    util.export_ranked_questions(selected_model, os.path.join(export_dir, 'ranked_questions.txt'))
+    util.export_useful_review_ranking(selected_model, os.path.join(export_dir, 'useful_review_ranking.txt'))
+    util.export_most_useful_review(selected_model, os.path.join(export_dir, 'most_useful_review.txt'))
+    util.export_important_question_ranking(selected_model, os.path.join(export_dir, 'important_question_ranking.txt'))
+    util.export_erqa_item_explanations(selected_model, export_dir)
+

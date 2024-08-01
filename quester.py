@@ -109,6 +109,7 @@ class Model:
         max_text_length=50,
         max_num_review=None,
         max_num_question=None,
+        max_num_answer=None,
         pretrained_word_embeddings=None,
         temperature_parameter=1.0,
         verbose=False,
@@ -130,6 +131,7 @@ class Model:
         self.max_text_length = max_text_length
         self.max_num_review = max_num_review
         self.max_num_question = max_num_question
+        self.max_num_answer = max_num_answer
         self.verbose = verbose
         if seed is not None:
             self.rng = get_rng(seed)
@@ -177,8 +179,8 @@ class Model:
         i_item_num_reviews = Input(
             shape=(1,), dtype="int32", name="input_item_number_of_review"
         )
-        i_item_num_qas = Input(
-            shape=(1,), dtype="int32", name="input_item_number_of_qa"
+        i_item_num_questions = Input(
+            shape=(1,), dtype="int32", name="input_item_number_of_question"
         )
 
         l_text_embedding = layers.Embedding(
@@ -241,7 +243,7 @@ class Model:
         item_review_h = item_text_processor(
             l_text_embedding(i_item_review), training=True
         )
-        item_qa_h = item_qa_text_processor(l_text_embedding(i_item_qa), training=True)
+        item_question_h = item_qa_text_processor(l_text_embedding(i_item_question), training=True)
 
         l_user_mlp = keras.models.Sequential(
             [
@@ -283,7 +285,7 @@ class Model:
 
         a_item_qa_dense = layers.Dense(
             self.attention_size, activation="tanh", use_bias=True
-        )(item_qa_h)
+        )(item_question_h)
         phi_jl = tf.expand_dims(a_item_qa_dense, axis=2)
         a_item_review_dense = layers.Dense(
             self.attention_size, activation="tanh", use_bias=True
@@ -298,7 +300,7 @@ class Model:
                 tf.cast(
                     tf.expand_dims(
                         tf.sequence_mask(
-                            tf.reshape(i_item_num_qas, [-1]), maxlen=i_item_qa.shape[1]
+                            tf.reshape(i_item_num_questions, [-1]), maxlen=i_item_question.shape[1]
                         ),
                         axis=-1,
                     ),
@@ -331,7 +333,7 @@ class Model:
             kappa_jl / temperature_parameter,
             tf.expand_dims(
                 tf.sequence_mask(
-                    tf.reshape(i_item_num_qas, [-1]), maxlen=i_item_qa.shape[1]
+                    tf.reshape(i_item_num_questions, [-1]), maxlen=i_item_question.shape[1]
                 ),
                 -1,
             ),
@@ -379,8 +381,8 @@ class Model:
                 i_item_rating,
                 i_item_review,
                 i_item_num_reviews,
-                i_item_qa,
-                i_item_num_qas,
+                i_item_question,
+                i_item_num_questions,
             ],
             outputs=r,
         )
@@ -404,7 +406,7 @@ class Model:
                 self.graph.get_layer("input_item_review").input,
                 self.graph.get_layer("input_item_number_of_review").input,
                 self.graph.get_layer("input_item_question").input,
-                self.graph.get_layer("input_item_number_of_qa").input,
+                self.graph.get_layer("input_item_number_of_question").input,
             ],
             outputs=[
                 self.graph.get_layer("qi").output,
@@ -455,7 +457,7 @@ class Model:
                 max_num_review=self.max_num_review,
             )
             item_qas, item_num_qas = get_item_qa(
-                batch_items, train_set, self.max_text_length, max_num_question=self.max_num_question
+                batch_items, train_set, self.max_text_length, max_num_question=self.max_num_question, max_num_answer=self.max_num_answer
             )
             qi, eta_jl, beta_jl, kappa_j, gamma_j = item_attention_pooling(
                 [
@@ -566,6 +568,7 @@ class QuestER(Recommender):
         max_text_length=128,
         max_num_review=32,
         max_num_question=32,
+        max_num_answer=1,
         batch_size=64,
         max_iter=10,
         optimizer="adam",
@@ -590,6 +593,7 @@ class QuestER(Recommender):
         self.max_text_length = max_text_length
         self.max_num_review = max_num_review
         self.max_num_question = max_num_question
+        self.max_num_answer = max_num_answer
         self.batch_size = batch_size
         self.max_iter = max_iter
         self.optimizer = optimizer
@@ -635,6 +639,7 @@ class QuestER(Recommender):
                     max_text_length=self.max_text_length,
                     max_num_review=self.max_num_review,
                     max_num_question=self.max_num_question,
+                    max_num_answer=self.max_num_answer,
                     pretrained_word_embeddings=self.init_params.get(
                         "pretrained_word_embeddings"
                     ),
@@ -685,6 +690,7 @@ class QuestER(Recommender):
                     self.train_set,
                     self.max_text_length,
                     max_num_question=self.max_num_question,
+                    max_num_answer=self.max_num_answer,
                 )
                 with tf.GradientTape() as tape:
                     predictions = self.model.graph(
