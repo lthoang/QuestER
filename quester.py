@@ -38,7 +38,7 @@ def get_item_qa(
                     item_question_answers_ids[: 1 + max_num_answer],
                     max_length=max_text_length
                 )  # keep the question and maximum number of answers acompanying with the given question
-                
+
                 item_questions.append(
                     item_question_answers_batch_seq[0]
                 )
@@ -83,7 +83,7 @@ def get_review_data(
     )
     for idx in batch_ids:
         ids, review_ids = [], []
-        for inc, (jdx, review_idx) in enumerate(review_group[idx].items()):
+        for inc, (jdx, review_idx) in enumerate(review_group.get(idx, {}).items()):
             if max_num_review is not None and inc == max_num_review:
                 break
             ids.append(jdx)
@@ -347,15 +347,15 @@ class Model:
             ),
             dtype=tf.bool
         )
-        xi_jkl = layers.Softmax(axis=2, name="xi_jkl")(upsilon_jkl, upsilon_jkl_mask)
+        delta_jkl = layers.Softmax(axis=2, name="delta_jkl")(upsilon_jkl / temperature_parameter, upsilon_jkl_mask)
         omega_jk = tf.reshape(
             tf.reduce_sum(
-                layers.Multiply()([tf.reshape(xi_jkl, shape=(-1, max_num_answer, 1)), item_question_answer_h]), axis=1
+                layers.Multiply()([tf.reshape(delta_jkl, shape=(-1, max_num_answer, 1)), item_question_answer_h]), axis=1
             ),
             shape=(-1, max_num_question, item_question_answer_h.shape[-1])
         )
         chi_jk = layers.Dense(self.attention_size, activation="tanh", use_bias=True, name="chi_jk")(omega_jk)
-        
+
         a_item_review_dense = layers.Dense(
             self.attention_size, activation="tanh", use_bias=True
         )(tf.multiply(item_review_h, tf.expand_dims(item_rating_h, 1)))
@@ -388,7 +388,7 @@ class Model:
             dtype=tf.bool,
         )
 
-        beta_jkl = layers.Softmax(axis=2, name="beta_jkl")(eta_jkl, eta_jkl_mask)
+        beta_jkl = layers.Softmax(axis=2, name="beta_jkl")(eta_jkl / temperature_parameter, eta_jkl_mask)
 
         d_jk = tf.reduce_sum(
             layers.Multiply()([beta_jkl, tf.expand_dims(chi_jk, axis=1)]), axis=2
@@ -484,7 +484,7 @@ class Model:
             ],
             outputs=[
                 self.graph.get_layer("qi").output,
-                self.graph.get_layer("xi_jkl").output,
+                self.graph.get_layer("delta_jkl").output,
                 self.graph.get_layer("eta_jkl").output,
                 self.graph.get_layer("beta_jkl").output,
                 self.graph.get_layer("kappa_jk").output,

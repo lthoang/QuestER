@@ -23,6 +23,9 @@ def parse_arguments():
     parser = argparse.ArgumentParser()
     parser.add_argument("-i", "--input", type=str, help="input directory")
     parser.add_argument("-ct", "--cluster_threshold", type=float, default=0.8)
+    parser.add_argument("-mu", "--min_user_freq", type=int, default=5)
+    parser.add_argument("-mi", "--min_item_freq", type=int, default=5)
+    parser.add_argument("-na", "--max_num_answer", type=int, default=1)
     parser.add_argument("-k", "--n_factors", type=int, default=8)
     parser.add_argument("-e", "--epoch", type=int, default=20)
     parser.add_argument("-bs", "--batch_size", type=int, default=64)
@@ -34,7 +37,7 @@ def parse_arguments():
 
 
 args = parse_arguments()
-feedback = Reader().read(os.path.join(args.input, "rating.txt"), fmt="UIRT", sep="\t")
+feedback = Reader(min_user_freq=args.min_user_freq, min_item_freq=args.min_item_freq).read(os.path.join(args.input, "rating.txt"), fmt="UIRT", sep="\t")
 reviews = Reader().read(
     os.path.join(args.input, "review.txt"), fmt="UIReview", sep="\t"
 )
@@ -48,7 +51,7 @@ ATTENTION_SIZE = 8
 BATCH_SIZE = args.batch_size
 MAX_NUM_REVIEW = 32
 MAX_NUM_QUESTION = 32
-MAX_NUM_ANSWER = 32
+MAX_NUM_ANSWER = args.max_num_answer
 MAX_TEXT_LENGTH = 128
 DROPOUT_RATE = 0.5
 TEST_SIZE = 0.1
@@ -107,7 +110,7 @@ with open(os.path.join(data_dir, "qa.txt"), "r") as f:
 mean_question = " ".join(centroid_questions[max_keep_idx:]).replace("\n", " ")
 
 item_with_qas = [x[0] for x in qas]
-item_without_qas = list(set([x[1] for x in reviews if x[1] not in item_with_qas]))
+item_without_qas = list(set([x[1] for x in feedback if x[1] not in item_with_qas]))
 [x[1].append((mean_question,)) for x in qas]
 qas = qas + [(x, [(mean_question,)]) for x in item_without_qas]
 
@@ -140,7 +143,7 @@ with open(f"download/glove/glove.6B.{EMB_SIZE}d.txt", encoding="utf-8") as f:
 models = [
     QuestER(
         # name=f"QuestER",
-        name=f"QuestER_F_{args.n_factors}_A_{ATTENTION_SIZE}_NReview_{MAX_NUM_REVIEW}_NQuestion_{MAX_NUM_QUESTION}_NAnswer_{MAX_NUM_ANSWER}_E_{args.epoch}_BS_{BATCH_SIZE}",
+        name=f"{os.path.basename(data_dir)}_QuestER_F_{args.n_factors}_A_{ATTENTION_SIZE}_NReview_{MAX_NUM_REVIEW}_NQuestion_{MAX_NUM_QUESTION}_NAnswer_{MAX_NUM_ANSWER}_E_{args.epoch}_BS_{BATCH_SIZE}",
         embedding_size=EMB_SIZE,
         id_embedding_size=ID_EMB_SIZE,
         n_factors=args.n_factors,
@@ -185,4 +188,4 @@ if args.model_selection == 'best':
     util.export_most_useful_review(selected_model, os.path.join(export_dir, 'most_useful_review.txt'))
     util.export_important_question_ranking(selected_model, os.path.join(export_dir, 'important_question_ranking.txt'))
     util.export_quester_explanations(selected_model, export_dir)
-import pdb; pdb.set_trace()
+# import pdb; pdb.set_trace()

@@ -127,6 +127,7 @@ class QuestERStratifiedSplit(StratifiedSplit):
             self.item_text,
             self.item_image,
             self.item_graph,
+            self.qa_text,
         ]:
             if item_modality is None:
                 continue
@@ -150,6 +151,39 @@ class QuestERStratifiedSplit(StratifiedSplit):
                 dok_matrix=self.train_set.dok_matrix,
             )
 
+        self.add_modalities(
+            user_feature=self.user_feature,
+            user_text=self.user_text,
+            user_image=self.user_image,
+            user_graph=self.user_graph,
+            item_feature=self.item_feature,
+            item_text=self.item_text,
+            item_image=self.item_image,
+            item_graph=self.item_graph,
+            sentiment=self.sentiment,
+            review_text=self.review_text,
+            qa_text=self.qa_text
+            review_and_item_qa_text=self.review_and_item_qa_text
+        )
+
+    def add_modalities(self, **kwargs):
+        """
+        Add successfully built modalities to all datasets. This is handy for
+        seperately built modalities that are not invoked in the build method.
+        """
+        self.user_feature = kwargs.get("user_feature", None)
+        self.user_text = kwargs.get("user_text", None)
+        self.user_image = kwargs.get("user_image", None)
+        self.user_graph = kwargs.get("user_graph", None)
+        self.item_feature = kwargs.get("item_feature", None)
+        self.item_text = kwargs.get("item_text", None)
+        self.item_image = kwargs.get("item_image", None)
+        self.item_graph = kwargs.get("item_graph", None)
+        self.sentiment = kwargs.get("sentiment", None)
+        self.review_text = kwargs.get("review_text", None)
+        self.qa_text = kwargs.get("qa_text", None)
+        self.review_and_item_qa_text = kwargs.get("review_and_item_qa_text", None)
+
         for data_set in [self.train_set, self.test_set, self.val_set]:
             if data_set is None:
                 continue
@@ -165,4 +199,5 @@ class QuestERStratifiedSplit(StratifiedSplit):
                 sentiment=self.sentiment,
                 review_text=self.review_text,
                 review_and_item_qa_text=self.review_and_item_qa_text,
+                qa_text=self.qa_text,
             )
